@@ -42,15 +42,56 @@ Spirit.loadResource = async function (imageUrlArray, imageArray) {
 }
 
 class Collision {
+    static type = { rect: 0, circle: 1 }
+
     constructor(props) {
-        this.rect = new Rect({ ...props })
+        this.type = props?.type ?? Collision.type.rect
+        switch (this.type) {
+            case Collision.type.rect: this.shape = new Rect({ ...props }); break
+            case Collision.type.circle: this.shape = { x: props.x, y: props.y, radius: props.radius }; break
+        }
+        this.color = props?.color ?? '#fff'
     }
 
     detect(target) {
-        const isColliding = this.rect.isRectCollide(target.rect)
-        return isColliding
+        if (this.type == target.type && this.type == Collision.type.rect)
+            return this.shape.isRectCollide(target.shape)
+        else {
+            const [rect, circle] = [this.shape, target.shape].sort(((a, b) => { return a.type > b.type ? 1 : -1 }))
+            return rect.getCorners().some(v => Math.sqrt(Math.pow(v.x - circle.x, 2) + Math.pow(v.y - circle.y, 2)) < circle.radius)
+        }
+    }
+
+    update({ x = 0, y = 0, w = 10, h = 10, theta = null } = {}) {
+        const rect = this.shape
+        rect.x = x, rect.y = y, rect.h = h, rect.theta = theta
+    }
+
+    draw(ctx, isColliding = false) {
+        return
+        ctx.save()
+        ctx.strokeStyle = isColliding ? 'rgb(255,0,0)' : this.color
+        const shape = this.shape
+        switch (this.type) {
+            case Collision.type.rect: {
+                ctx.translate(shape.center.x, shape.center.y)
+                ctx.rotate(shape.theta)
+                ctx.strokeRect(shape.size.x / -2, shape.size.y / -2, shape.size.x, shape.size.y)
+                //ctx.fillStyle = this.color
+                //ctx.fillRect(-2, -2, 4, 4)
+                ctx.restore()
+                break
+            }
+            case Collision.type.circle: {
+                ctx.beginPath()
+                ctx.arc(shape.x, shape.y, shape.radius, 0, 2 * Math.PI)
+                ctx.stroke()
+                break
+            }
+        }
     }
 }
+
 
 class Item {
     constructor(props = {}) {
@@ -87,6 +128,9 @@ class Gun extends Item {
     init() {
         this.xOffset = 42, this.yOffset = 10, this.angle = 0
         this.bullet = null
+        this.timer = { interval: 2, index: 0, time: 100 }
+        this.frame = { index: 0, max: 5 }
+        this.playing = false
         Object.defineProperty(this, "level", {
             get: function () { return this.$level }.bind(this),
             set: function (v) {
@@ -123,7 +167,7 @@ class Gun extends Item {
             x: this.rotate.x, y: this.rotate.y,
             vx: sx / hypotenuse, vy: sy / hypotenuse,
             angle: this.angle,
-            speed: 4,
+            speed: 5,
             level: this.level,
             boundary: this.boundary,
             gun: this,
@@ -131,6 +175,8 @@ class Gun extends Item {
             isCollided: false
         }
         this.bullet = render.push(Assets.images.bullet, new Bullet(props), 5)
+        this.frame.index = 0
+        this.playing = true
     }
 
     getAngle(center, point) {
@@ -149,12 +195,33 @@ class Gun extends Item {
         ctx.rotate(angle)
         ctx.translate(-rotate.x, -rotate.y)
         ctx.translate(start.x, start.y)
-        ctx.drawImage(img, 0, 0, width, height, 0, 0, width, height)
+        ctx.drawImage(img, 0, 0 + height * this.frame.index, width, height, 0, 0, width, height)
         ctx.restore()
+    }
+
+    tick(render) {
+        if (this.playing && ++this.timer.index > this.timer.interval) {
+            this.timer.index = 0
+            if (++this.frame.index == this.frame.max) {
+                this.playing = false
+                this.frame.index = 0
+            }
+        }
+
     }
 }
 
 class Bullet extends Item {
+    static config = {
+        1: { x: 86, y: 0, w: 25, h: 28 },
+        2: { x: 61, y: 1, w: 25, h: 28 },
+        3: { x: 32, y: 36, w: 27, h: 30 },
+        4: { x: 30, y: 82, w: 29, h: 33 },
+        5: { x: 30, y: 0, w: 31, h: 35 },
+        6: { x: 0, y: 82, w: 30, h: 36 },
+        7: { x: 0, y: 45, w: 32, h: 37 },
+    }
+
     get collision() {
         const type = Bullet.config[this.level]
         return new Collision({ x: this.x, y: this.y, w: type.w, h: type.h, angle: this.angle * 180 / Math.PI })
@@ -176,52 +243,66 @@ class Bullet extends Item {
             type.w / -2, type.h / -2, type.w, type.h)
         ctx.restore()
         //draw collision
-        this.collision.rect.draw(ctx, this.isCollided)
+        this.collision.draw(ctx, this.isCollided)
     }
 
     tick(render) {
-        this.y -= this.vy * this.speed
-        this.x += this.vx * this.speed
-        //out of boundary
-        for (const corner of this.collision.rect.getCorners()) {
-            if (this.boundary.check(corner)) {
-                const fishGenerator = this.game.fishGenerator
-                this.isCollided = false
-                //shot judgement
-                for (const fish of fishGenerator.sets) {
-                    if (this.collision.rect.isRectCollide(fish.collision.rect)) {
-                        this.isCollided = true
-                        //break
-                        console.log('true')
+        this.y -= this.vy * this.speed, this.x += this.vx * this.speed
+        let flag = false
+        const capture = (collision, callback = null, single = false) => {
+            const fishGenerator = this.game.fishGenerator
+            for (const fish of fishGenerator.sets) {
+                if (collision.detect(fish.collision)) {
+                    //if (collision.shape.isRectCollide(fish.collision.shape)) {
+                    this.isCollided = true
+                    if (fish.canBeCaptured(this.level)) {
                         //fish dying
                         fishGenerator.delete(fish)
-                        fish.dying.state = this.dead = true
-                        //create web
-                        render.push(Assets.images.web, new Web({ x: this.x, y: this.y, level: this.level }), 3)
-                        break
+                        fish.dying.state = true
                     }
+                    this.dead = true
+                    //create web
+                    if (callback != null) callback()
+                    if (single) break
                 }
-                return true
             }
         }
-        console.log('bullet dead')
-        this.dead = true
-        return false
+
+        //out of boundary
+        for (const corner of this.collision.shape.getCorners()) {
+            if (this.boundary.check(corner) && !flag) {
+                this.isCollided = false
+                //shot judgement
+                capture(this.collision, () => {
+                    //create web
+                    const web = render.push(Assets.images.web, new Web({ x: this.x, y: this.y, level: this.level }), 3)
+                    capture(web.collision)
+                }, true)
+                flag = true
+                return true
+            }
+            else {
+                this.dead = true
+                return false
+            }
+        }
     }
 }
 
-Bullet.config = {
-    1: { x: 86, y: 0, w: 25, h: 28 },
-    2: { x: 61, y: 1, w: 25, h: 28 },
-    3: { x: 32, y: 36, w: 27, h: 30 },
-    4: { x: 30, y: 82, w: 29, h: 33 },
-    5: { x: 30, y: 0, w: 31, h: 35 },
-    6: { x: 0, y: 82, w: 30, h: 36 },
-    7: { x: 0, y: 45, w: 32, h: 37 },
-}
-
 class Web extends Item {
+    static config = {
+        1: { x: 332, y: 372, w: 88, h: 88 },
+        2: { x: 13, y: 412, w: 110, h: 110 },
+        3: { x: 176, y: 367, w: 130, h: 130 },
+        4: { x: 252, y: 194, w: 150, h: 150 },
+        5: { x: 0, y: 244, w: 163, h: 155 },
+        6: { x: 242, y: 0, w: 180, h: 180 },
+        7: { x: 21, y: 22, w: 200, h: 200 },
+    }
+
     init() {
+        const size = Web.config[this.level]
+        this.collision = new Collision({ x: this.x, y: this.y, radius: Math.max(size.w, size.h) / 2, type: Collision.type.circle, color: 'pink' })
         this.tween = new TWEEN.Tween({ rw: .8, rh: .8 }).to({ rw: 1, rh: 1 }, 120).yoyo(true).repeat(1)
             .easing(TWEEN.Easing.Linear.None).onUpdate(
                 function (object) {
@@ -244,70 +325,90 @@ class Web extends Item {
             type.x, type.y, type.w, type.h,
             type.w * this.rw / -2, type.h * this.rh / -2, type.w * this.rw, type.h * this.rh)
         ctx.restore()
+        this.collision.draw(ctx)
     }
-}
-
-Web.config = {
-    1: { x: 332, y: 372, w: 88, h: 88 },
-    2: { x: 13, y: 412, w: 110, h: 110 },
-    3: { x: 176, y: 367, w: 130, h: 130 },
-    4: { x: 252, y: 194, w: 150, h: 150 },
-    5: { x: 0, y: 244, w: 163, h: 155 },
-    6: { x: 242, y: 0, w: 180, h: 180 },
-    7: { x: 21, y: 22, w: 200, h: 200 },
 }
 
 class Fish extends Item {
+    static sets = new Set()
+    static config = {
+        1: {
+            size: { w: 55, h: 37 }, collision: { x: 0, y: -7, w: 55, h: 26 },
+            captureRate: .55, price: 1
+        },
+        2: {
+            size: { w: 78, h: 64 }, collision: { x: 0, y: -12, w: 78, h: 35 },
+            captureRate: .5, price: 2
+        },
+        3: {
+            size: { w: 72, h: 56 }, collision: { x: 0, y: -12, w: 82, h: 32 },
+            captureRate: .45, price: 5
+        },
+        4: {
+            size: { w: 77, h: 59 }, collision: { x: 0, y: -12, w: 77, h: 34 },
+            captureRate: .4, price: 10
+        },
+        5: {
+            size: { w: 107, h: 122 }, collision: { x: 4, y: - 7, w: 91, h: 72 },
+            captureRate: .35, price: 20
+        },
+    }
+
     get collision() {
-        const type = Fish.config[this.level]
-        return new Collision({ x: this.x, y: this.y, w: type.w, h: type.h, angle: this.angle * 180 / Math.PI })
+        const type = Fish.config[this.level],
+            size = type.size, edge = type.collision,
+            collision = new Collision({ x: this.x, y: this.y, w: size.w, h: size.h, theta: this.angle }),
+            rect = collision.shape
+        let [RX, RY] = rect.getAxis()
+        RX = RX.direction.Multiply(edge.x), RY = RY.direction.Multiply(edge.y)
+        rect.center = rect.center.Add(RX).Add(RY)
+        rect.size.x = edge.w, rect.size.y = edge.h
+        return collision
     }
 
     init() {
-        this.timer = {
-            last: null, interval: 10, count: 0
-        }
-        this.frame = {
-            count: 0, max: 7
-        }
+        this.timer = { last: null, interval: 10, index: 0 }
+        this.frame = { index: 0, max: 7 }
         this.dying = {
             state: false,
-            interval: 60, count: 0
+            interval: 60, index: 0
         }
     }
 
+    canBeCaptured(level) {
+        return Fish.config[this.level].captureRate * (1 + level * 0.05) > this.game.fishGenerator.rand.gen()
+    };
+
     draw(ctx) {
-        const img = Assets.images[`fish${this.level}`]
-        const type = Fish.config[this.level]
+        const img = Assets.images[`fish${this.level}`], type = Fish.config[this.level], size = type.size
         ctx.save()
         ctx.translate(this.x, this.y)
         ctx.rotate(this.angle)
-        //console.log()
         ctx.drawImage(img,
-            type.x, type.y + type.h * this.frame.count, type.w, type.h,
-            type.w / -2, type.h / -2, type.w, type.h)
+            0, 0 + size.h * this.frame.index, size.w, size.h,
+            size.w / -2, size.h / -2, size.w, size.h)
         ctx.restore()
-        this.collision.rect.draw(ctx)
+        this.collision.draw(ctx)
     }
 
     tick(render) {
         //console.log('is dying', this.dying.state)
         //switch spirit frame
-        if (++this.timer.count > this.timer.interval) {
-            this.timer.count = 0
-            this.frame.count++
-            this.frame.count &= 3
-            if (this.dying.state) this.frame.count += 4
+        if (++this.timer.index > this.timer.interval) {
+            this.timer.index = 0
+            this.frame.index++
+            this.frame.index &= 3
+            if (this.dying.state) this.frame.index += 4
         }
         if (this.dying.state) {
-            if (this.dying.count++ == this.dying.interval) {
+            if (this.dying.index++ == this.dying.interval) {
                 this.dead = true
                 //create coin
                 render.push(Assets.images.coinAni1,
                     new Coin({
                         x: this.x, y: this.y,
                         sx: this.boundary.cx + 100, sy: this.boundary.fy - 50,
-                        level: 1
+                        level: Fish.config[this.level].price < 15 ? 1 : 2
                     }), 7)
                 render.push(Assets.images.coinAni1,
                     new CoinText({
@@ -324,32 +425,27 @@ class Fish extends Item {
         this.y += this.vy * this.speed
         this.x += this.vx * this.speed
         //out of boundary
-        for (const corner of this.collision.rect.getCorners()) {
+        const size = Fish.config[this.level].size,
+            corners = new Rect({ x: this.x, y: this.y, w: size.w, h: size.h, theta: this.angle }).getCorners()
+        for (const corner of corners) {
             if (this.boundary.check(corner)) return
         }
         this.dead = true
-        //console.log('dead')
+        //  console.log('dead')
         return
     }
 }
 
-Fish.sets = new Set()
-Fish.config = {
-    1: { x: 0, y: 0, w: 55, h: 37, price: 1 },
-    2: { x: 0, y: 0, w: 78, h: 64, price: 2 },
-    3: { x: 0, y: 0, w: 72, h: 56, price: 5 },
-    4: { x: 0, y: 0, w: 77, h: 59, price: 10 },
-    5: { x: 0, y: 0, w: 107, h: 122, price: 20 },
-}
+
 
 class Coin extends Item {
     init() {
         this.type = { x: 0, y: 0, w: 60, h: 60 }
         this.timer = {
-            interval: 4, count: 0, time: 100
+            interval: 4, index: 0, time: 100
         }
         this.frame = {
-            count: 0, max: 10
+            index: 0, max: 10
         }
         this.tween = new TWEEN.Tween({ x: this.x, y: this.y }).to({ x: this.sx, y: this.sy }, 700)
             .easing(TWEEN.Easing.Linear.None).onUpdate(
@@ -368,16 +464,16 @@ class Coin extends Item {
         ctx.save()
         ctx.translate(this.x, this.y)
         ctx.drawImage(img,
-            type.x, type.y + type.h * this.frame.count, type.w, type.h,
+            type.x, type.y + type.h * this.frame.index, type.w, type.h,
             type.w / -2, type.h / -2, type.w, type.h)
         ctx.restore()
     }
 
     tick(render) {
-        if (++this.timer.count > this.timer.interval) {
-            this.timer.count = 0
-            this.frame.count++
-            this.frame.count %= this.frame.max
+        if (++this.timer.index > this.timer.interval) {
+            this.timer.index = 0
+            this.frame.index++
+            this.frame.index %= this.frame.max
         }
     }
 }

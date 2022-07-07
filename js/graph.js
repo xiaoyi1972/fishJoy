@@ -123,17 +123,6 @@ class Rect {
         return isProjectionCollide({ rect: rA, onRect: rB })
             && isProjectionCollide({ rect: rB, onRect: rA })
     }
-
-    draw(ctx, isColliding = false) {
-        return
-        const rect = this
-        ctx.save()
-        ctx.translate(rect.center.x, rect.center.y)
-        ctx.rotate(rect.theta)
-        ctx.strokeStyle = `rgba( ${isColliding ? '255,0,0' : rect.rgb},2)`
-        ctx.strokeRect(rect.size.x / -2, rect.size.y / -2, rect.size.x, rect.size.y)
-        ctx.restore()
-    }
 }
 
 Rect.toRadians = (degrees) => degrees * Math.PI / 180

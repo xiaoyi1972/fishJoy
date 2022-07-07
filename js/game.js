@@ -86,8 +86,7 @@ class Render {
             this.sorted = true
         }
         this.ctx.clearRect(0, 0, this.ctx.width, this.ctx.height)
-        const len = this.spirits.length
-        const sortedArray = []
+        const len = this.spirits.length, sortedArray = []
         // console.log(`spirits[${this.spirits.length}] lived_fish{${this.fishGenerator.sets.size}]`)
         for (let i = 0; i < len && this.spirits[i].visible; i++) {
             //if (this.spirits[i].animate instanceof Animator) this.spirits[i].animate.update()
@@ -120,46 +119,57 @@ class Game {
         this.data = { score: 0 }
         this.fishGenerator = {
             rand: new Rand(),
-            amount: 20,
+            amount: 10,
             sets: new Set(),
             delete: function (fish) { this.fishGenerator.sets.delete(fish) }.bind(this),
             create: function (boundary) {
                 if (this.fishGenerator.sets.size == this.fishGenerator.amount) return
-                const rand = this.fishGenerator.rand
-                const level = Math.trunc(rand.gen(1, 6)), drop = Math.trunc(rand.gen(1, 10))
-                let angle,
-                    x = rand.gen(boundary.cx, boundary.fx),
-                    y = rand.gen(boundary.cx, boundary.fy)
-                if ((drop & 1) == 0)
-                    x = x < boundary.fx / 2 ? boundary.cx : boundary.fx
-                else
-                    y = y < boundary.fy / 2 ? boundary.cy : boundary.fy
-                const angle_v = Math.atan2(y - boundary.fy / 2, x - boundary.fx / 2) * 180 / Math.PI;
+                const rand = this.fishGenerator.rand, level = Math.trunc(rand.gen(1, 6))
+                    , size = Fish.config[level].size
+                let angle, x = rand.gen(boundary.cx, boundary.fx), y = rand.gen(boundary.cy, boundary.fy)
+                x = x < boundary.fx / 2 ? boundary.cx : boundary.fx
+
+                //x = (boundary.fx - boundary.cx) * .5, y = (boundary.fy - boundary.cy) * .5
+                const angle_v = Math.atan2(y - boundary.fy / 2, x - boundary.fx / 2) * 180 / Math.PI
                 angle = angle_v
-                if (angle < 45 && angle >= -45) { /// console.log('右')
+                if (angle < 45 && angle >= -45) {  //right
                     angle = rand.gen(135, 225)
-                } else if (angle < 135 && angle >= 45) { // console.log('下')
+                } else if (angle < 135 && angle >= 45) {  //down
                     angle = rand.gen(-45, -135)
-                } else if ((angle <= 180 && angle >= 135) || (angle >= -180 && angle < -135)) { // console.log('左')
+                } else if ((angle <= 180 && angle >= 135) || (angle >= -180 && angle < -135)) {  //left
                     angle = rand.gen(-45, 45)
-                } else if (angle <= -45 && angle >= -135) { // console.log('上')
+                } else if (angle <= -45 && angle >= -135) {  //up
                     angle = rand.gen(45, 135)
                 }
                 angle = Rect.toRadians(angle)
+
+                const corners = new Rect({ x: x, y: y, w: size.w, h: size.h, angle: Rect.toDegrees(angle) })
+                    .getCorners()
+                    .reduce((a, b) => {
+                   //     console.log(a, b)
+                        a = a ?? b
+                        return x == boundary.cx ? (a.x > b.x ? a : b) : (a.x < b.x ? a : b)
+                    }, null)
+               // console.log(x, corners)
+                x += x - corners.x
+             //   console.log("x:", x, "===========")
+
+                //   console.log(boundary.cx, boundary.fx, x)
                 const vx = Math.cos(angle), vy = Math.sin(angle)
                 const props = {
                     x: x, y: y,
                     vx: vx, vy: vy,
-                    angle: angle,//Rect.toRadians(angle),
-                    speed: .5,
+                    angle:
+                        //0,
+                        // Math.PI / 4 * 0,
+                        angle,
+                    speed: 1.,//- .5,
                     level: level,
                     boundary: boundary,
                     game: this
                 }
                 const fish = this.render.push(Assets.images[`fish${level}`], new Fish(props), 2)
-                fish.deadProxy = function () {
-                    this.fishGenerator.delete(fish)
-                }.bind(this)
+                fish.deadProxy = function () { this.fishGenerator.delete(fish) }.bind(this)
                 this.fishGenerator.sets.add(fish)
                 return fish
             }
@@ -178,6 +188,7 @@ class Game {
             }
             item.boundary.check = function (pos) {
                 const { cx, fx, cy, fy } = item.boundary, { x, y } = pos
+              //  console.log("cx:", cx, "fx:", fx, "cy:", cy, "fy:", fy, "x:", x, "y:", y)
                 return (x < cx || x > fx || y < cy || y > fy) ? false : true
             }.bind(item.boundary)
         })
