@@ -87,9 +87,7 @@ class Render {
         }
         this.ctx.clearRect(0, 0, this.ctx.width, this.ctx.height)
         const len = this.spirits.length, sortedArray = []
-        // console.log(`spirits[${this.spirits.length}] lived_fish{${this.fishGenerator.sets.size}]`)
         for (let i = 0; i < len && this.spirits[i].visible; i++) {
-            //if (this.spirits[i].animate instanceof Animator) this.spirits[i].animate.update()
             if (!this.spirits[i].cover) this.spirits[i].item.draw(this.ctx)
             sortedArray.push(this.spirits[i])
         }
@@ -117,89 +115,16 @@ class Game {
         Game.dpiOptimize(scene)
         this.render = new Render(scene)
         this.data = { score: 0 }
-        this.fishGenerator = {
-            rand: new Rand(),
-            amount: 10,
-            sets: new Set(),
-            delete: function (fish) { this.fishGenerator.sets.delete(fish) }.bind(this),
-            create: function (boundary) {
-                if (this.fishGenerator.sets.size == this.fishGenerator.amount) return
-                const rand = this.fishGenerator.rand, level = Math.trunc(rand.gen(1, 6))
-                    , size = Fish.config[level].size
-                let angle, x = rand.gen(boundary.cx, boundary.fx), y = rand.gen(boundary.cy, boundary.fy)
-                x = x < boundary.fx / 2 ? boundary.cx : boundary.fx
-
-                //x = (boundary.fx - boundary.cx) * .5, y = (boundary.fy - boundary.cy) * .5
-                const angle_v = Math.atan2(y - boundary.fy / 2, x - boundary.fx / 2) * 180 / Math.PI
-                angle = angle_v
-                if (angle < 45 && angle >= -45) {  //right
-                    angle = rand.gen(135, 225)
-                } else if (angle < 135 && angle >= 45) {  //down
-                    angle = rand.gen(-45, -135)
-                } else if ((angle <= 180 && angle >= 135) || (angle >= -180 && angle < -135)) {  //left
-                    angle = rand.gen(-45, 45)
-                } else if (angle <= -45 && angle >= -135) {  //up
-                    angle = rand.gen(45, 135)
-                }
-                angle = Rect.toRadians(angle)
-
-                const corners = new Rect({ x: x, y: y, w: size.w, h: size.h, angle: Rect.toDegrees(angle) })
-                    .getCorners()
-                    .reduce((a, b) => {
-                   //     console.log(a, b)
-                        a = a ?? b
-                        return x == boundary.cx ? (a.x > b.x ? a : b) : (a.x < b.x ? a : b)
-                    }, null)
-               // console.log(x, corners)
-                x += x - corners.x
-             //   console.log("x:", x, "===========")
-
-                //   console.log(boundary.cx, boundary.fx, x)
-                const vx = Math.cos(angle), vy = Math.sin(angle)
-                const props = {
-                    x: x, y: y,
-                    vx: vx, vy: vy,
-                    angle:
-                        //0,
-                        // Math.PI / 4 * 0,
-                        angle,
-                    speed: 1.,//- .5,
-                    level: level,
-                    boundary: boundary,
-                    game: this
-                }
-                const fish = this.render.push(Assets.images[`fish${level}`], new Fish(props), 2)
-                fish.deadProxy = function () { this.fishGenerator.delete(fish) }.bind(this)
-                this.fishGenerator.sets.add(fish)
-                return fish
-            }
-        }
-        this.render.fishGenerator = this.fishGenerator
         this.init()
-        //this.render.restart()
     }
 
     init() {
-        const stage = this.render.push(Assets.images.game_bg, new Stage({ game: this })).attach(item => {
-            const img = item.img
-            item.boundary = {
-                cx: 0, fx: img.width,
-                cy: 0, fy: img.height
-            }
-            item.boundary.check = function (pos) {
-                const { cx, fx, cy, fy } = item.boundary, { x, y } = pos
-              //  console.log("cx:", cx, "fx:", fx, "cy:", cy, "fy:", fy, "x:", x, "y:", y)
-                return (x < cx || x > fx || y < cy || y > fy) ? false : true
-            }.bind(item.boundary)
-        })
-
-        this.fishGenerator.create = this.fishGenerator.create.bind(this, stage.boundary)
-        this.fishGenerator.coinBox = { x: 50, y: stage.boundary.fy - 40 }
-
+        const stage = this.render.push(Assets.images.game_bg, new Stage({ game: this }))
+        Fish.generator.create = Fish.generator.create.bind(this, this.render, Stage.boundary)
         const gun = this.render.push(
             Assets.images.cannon1,
             new Gun({
-                ctx: this.render.ctx, x: 0, y: 0, speed: 0, level: 1, boundary: stage.boundary,
+                ctx: this.render.ctx, x: 0, y: 0, speed: 0, level: 1,
                 game: this,
             }), 6
         ).attach(item => {
@@ -237,10 +162,8 @@ class Game {
             }
             item.mouse = { click: listeners }
         })
-
-        for (let i = 0; i < this.fishGenerator.amount; i++)
-            this.fishGenerator.create()
-
+        
+        for (let i = 0; i < Fish.generator.amount; i++) Fish.generator.create()
         // this.render.push(Assets.images.web, new Web({ x: 200, y: 200, level: 1 }), 2)
     }
 

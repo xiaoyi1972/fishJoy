@@ -110,16 +110,21 @@ class Item {
 }
 
 class Stage extends Item {
+    static boundary = {
+        cx: 0, fx: 800, cy: 0, fy: 600,
+        check: function (pos) {
+            const { cx, fx, cy, fy } = Stage.boundary, { x, y } = pos
+            return (x < cx || x > fx || y < cy || y > fy) ? false : true
+        }.bind(Stage.boundary)
+    }
+
     draw(ctx) {
         ctx.drawImage(this.img, 0, 0, this.img.width, this.img.height)
     }
 
     tick(render) {
-        const fishGenerator = this.game.fishGenerator
-        //console.log('fish live:', fishGenerator.sets.size, ' fish amount:', fishGenerator.amount)
-        while (fishGenerator.sets.size < fishGenerator.amount) {
-            fishGenerator.create()
-            //console.log('create')
+        while (Fish.generator.sets.size < Fish.generator.amount) {
+            Fish.generator.create()
         }
     }
 }
@@ -133,10 +138,7 @@ class Gun extends Item {
         this.playing = false
         Object.defineProperty(this, "level", {
             get: function () { return this.$level }.bind(this),
-            set: function (v) {
-                this.$level = v
-                this.img = Assets.images[`cannon${this.level}`]
-            }.bind(this)
+            set: function (v) { this.$level = v; this.img = Assets.images[`cannon${this.$level}`] }.bind(this)
         })
         this.level = 1
         this.relative = {}, this.rotate = {}, this.start = {}
@@ -169,7 +171,6 @@ class Gun extends Item {
             angle: this.angle,
             speed: 5,
             level: this.level,
-            boundary: this.boundary,
             gun: this,
             game: this.game,
             isCollided: false
@@ -207,7 +208,6 @@ class Gun extends Item {
                 this.frame.index = 0
             }
         }
-
     }
 }
 
@@ -250,14 +250,12 @@ class Bullet extends Item {
         this.y -= this.vy * this.speed, this.x += this.vx * this.speed
         let flag = false
         const capture = (collision, callback = null, single = false) => {
-            const fishGenerator = this.game.fishGenerator
-            for (const fish of fishGenerator.sets) {
+            for (const fish of Fish.generator.sets) {
                 if (collision.detect(fish.collision)) {
-                    //if (collision.shape.isRectCollide(fish.collision.shape)) {
                     this.isCollided = true
-                    if (fish.canBeCaptured(this.level)) {
+                    if (!single && fish.canBeCaptured(this.level)) {
                         //fish dying
-                        fishGenerator.delete(fish)
+                        Fish.generator.delete(fish)
                         fish.dying.state = true
                     }
                     this.dead = true
@@ -270,7 +268,7 @@ class Bullet extends Item {
 
         //out of boundary
         for (const corner of this.collision.shape.getCorners()) {
-            if (this.boundary.check(corner) && !flag) {
+            if (Stage.boundary.check(corner) && !flag) {
                 this.isCollided = false
                 //shot judgement
                 capture(this.collision, () => {
@@ -330,7 +328,53 @@ class Web extends Item {
 }
 
 class Fish extends Item {
-    static sets = new Set()
+    static generator = {
+        rand: new Rand(),
+        amount: 10,
+        sets: new Set(),
+        delete: function (fish) { Fish.generator.sets.delete(fish) }.bind(this),
+        create: function (render, boundary) {
+            if (Fish.generator.sets.size == Fish.generator.amount) return
+            const rand = Fish.generator.rand, level = Math.trunc(rand.gen(1, 6))
+                , size = Fish.config[level].size
+            let angle, x = rand.gen(boundary.cx, boundary.fx), y = rand.gen(boundary.cy, boundary.fy)
+            x = x < boundary.fx / 2 ? boundary.cx : boundary.fx
+            const angle_v = Math.atan2(y - boundary.fy / 2, x - boundary.fx / 2) * 180 / Math.PI
+            angle = angle_v
+            if (angle < 45 && angle >= -45) {  //right
+                angle = rand.gen(135, 225)
+            } else if (angle < 135 && angle >= 45) {  //down
+                angle = rand.gen(-45, -135)
+            } else if ((angle <= 180 && angle >= 135) || (angle >= -180 && angle < -135)) {  //left
+                angle = rand.gen(-45, 45)
+            } else if (angle <= -45 && angle >= -135) {  //up
+                angle = rand.gen(45, 135)
+            }
+            angle = Rect.toRadians(angle)
+            const corners = new Rect({ x: x, y: y, w: size.w, h: size.h, angle: Rect.toDegrees(angle) })
+                .getCorners()
+                .reduce((a, b) => {
+                    a = a ?? b
+                    return x == boundary.cx ? (a.x > b.x ? a : b) : (a.x < b.x ? a : b)
+                }, null)
+            x += x - corners.x
+            const vx = Math.cos(angle), vy = Math.sin(angle),
+                props = {
+                    x: x, y: y,
+                    vx: vx, vy: vy,
+                    angle: angle,
+                    speed: 1.,//- .5,
+                    level: level,
+                    boundary: boundary,
+                    game: this
+                },
+                fish = render.push(Assets.images[`fish${level}`], new Fish(props), 2)
+            Fish.generator.sets.add(fish)
+            return fish
+        },
+        coinBox: { x: 50, y: Stage.boundary.fy - 40 }
+    }
+
     static config = {
         1: {
             size: { w: 55, h: 37 }, collision: { x: 0, y: -7, w: 55, h: 26 },
@@ -376,7 +420,7 @@ class Fish extends Item {
     }
 
     canBeCaptured(level) {
-        return Fish.config[this.level].captureRate * (1 + level * 0.05) > this.game.fishGenerator.rand.gen()
+        return Fish.config[this.level].captureRate * (1 + level * 0.05) < Fish.generator.rand.gen()
     };
 
     draw(ctx) {
@@ -391,8 +435,11 @@ class Fish extends Item {
         this.collision.draw(ctx)
     }
 
+    deadProxy(){
+        Fish.generator.delete(this)
+    }
+
     tick(render) {
-        //console.log('is dying', this.dying.state)
         //switch spirit frame
         if (++this.timer.index > this.timer.interval) {
             this.timer.index = 0
@@ -422,21 +469,18 @@ class Fish extends Item {
             return
         }
         //update moving position
-        this.y += this.vy * this.speed
-        this.x += this.vx * this.speed
+        this.y += this.vy * this.speed, this.x += this.vx * this.speed
         //out of boundary
         const size = Fish.config[this.level].size,
             corners = new Rect({ x: this.x, y: this.y, w: size.w, h: size.h, theta: this.angle }).getCorners()
         for (const corner of corners) {
-            if (this.boundary.check(corner)) return
+            if (Stage.boundary.check(corner)) return
         }
         this.dead = true
         //  console.log('dead')
         return
     }
 }
-
-
 
 class Coin extends Item {
     init() {
